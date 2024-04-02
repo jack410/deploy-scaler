@@ -1,0 +1,13 @@
+apiVersion: api.scaler.com/v1alpha1
+kind: Scaler
+metadata:
+  name: scaler-sample
+spec:
+  start: 20
+  end: 23
+  replicas: 1
+  deployments:
+    - name: reviews-v1
+      namespace: default
+    - name: reviews-v2
+      namespace: default

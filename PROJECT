@@ -1,0 +1,16 @@
+domain: scaler.com
+layout:
+- go.kubebuilder.io/v3
+projectName: deploy-scaler
+repo: github.com/jack410/deploy-scaler
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: scaler.com
+  group: api
+  kind: Scaler
+  path: github.com/jack410/deploy-scaler/api/v1alpha1
+  version: v1alpha1
+version: "3"

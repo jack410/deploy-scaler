@@ -1,0 +1,24 @@
+# permissions for end users to edit scalers.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: scaler-editor-role
+rules:
+- apiGroups:
+  - api.scaler.com
+  resources:
+  - scalers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - api.scaler.com
+  resources:
+  - scalers/status
+  verbs:
+  - get
