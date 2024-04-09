@@ -180,7 +180,7 @@ func scaleDeployment(scaler *apiv1alpha1.Scaler, r *ScalerReconciler, ctx contex
 			deployment.Spec.Replicas = &replicas
 			err := r.Update(ctx, deployment)
 			if err != nil {
-				scaler.Status.Status = apiv1alpha1.Failed
+				scaler.Status.Status = apiv1alpha1.FAILED
 				r.Status().Update(ctx, scaler)
 				return err
 			}

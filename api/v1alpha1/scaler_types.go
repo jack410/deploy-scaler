@@ -22,7 +22,7 @@ import (
 
 const (
 	SCALED   = "Scaled"
-	Failed   = "Failed"
+	FAILED   = "Failed"
 	PENDING  = "Pending"
 	RESTORED = "Restored"
 )
