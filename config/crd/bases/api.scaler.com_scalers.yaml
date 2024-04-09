@@ -55,11 +55,15 @@ spec:
                   type: object
                 type: array
               end:
+                maximum: 24
+                minimum: 0
                 type: integer
               replicas:
                 format: int32
                 type: integer
               start:
+                maximum: 23
+                minimum: 0
                 type: integer
             required:
             - deployments

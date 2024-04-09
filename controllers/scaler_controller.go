@@ -21,6 +21,8 @@ import (
 	"fmt"
 	v1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/json"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"time"
 
@@ -30,7 +32,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const finalizer = "scalers.api.scaler.com/finalizer"
+
 var logger = log.Log.WithName("scaler_controller")
+
+var originalDeploymentInfo = make(map[string]apiv1alpha1.DeploymentInfo)
+var annotations = make(map[string]string)
 
 // ScalerReconciler reconciles a Scaler object
 type ScalerReconciler struct {
@@ -63,23 +70,96 @@ func (r *ScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	startTime := scaler.Spec.Start
-	endTime := scaler.Spec.End
-	replicas := scaler.Spec.Replicas
-
-	currenHour := time.Now().Local().Hour()
-	log.Info(fmt.Sprintf("currentTIme: %d", currenHour))
-
-	//从startime开始endtime位置
-	if currenHour >= startTime && currenHour < endTime {
-		log.Info("starting to call scaleDeployment func.")
-		err := scaleDeployment(scaler, r, ctx, replicas)
-		if err != nil {
-			return ctrl.Result{}, err
+	if scaler.ObjectMeta.DeletionTimestamp.IsZero() {
+		if !controllerutil.ContainsFinalizer(scaler, finalizer) {
+			controllerutil.AddFinalizer(scaler, finalizer)
+			log.Info("add finalizer.")
+			err := r.Update(ctx, scaler)
+			if err != nil {
+				return ctrl.Result{}, client.IgnoreNotFound(err)
+			}
 		}
+		if scaler.Status.Status == "" {
+			scaler.Status.Status = apiv1alpha1.PENDING
+			err := r.Status().Update(ctx, scaler)
+			if err != nil {
+				return ctrl.Result{}, client.IgnoreNotFound(err)
+			}
+
+			//将scaler中管理的deployments的副本数和namespace名称加到annotations里
+			if err := addAnnotations(scaler, r, ctx); err != nil {
+				return ctrl.Result{}, client.IgnoreNotFound(err)
+			}
+		}
+
+		//开始执行scaler的逻辑
+		startTime := scaler.Spec.Start
+		endTime := scaler.Spec.End
+		replicas := scaler.Spec.Replicas
+
+		currenHour := time.Now().Local().Hour()
+		log.Info(fmt.Sprintf("currentTIme: %d", currenHour))
+
+		//从startime开始endtime为止
+		if currenHour >= startTime && currenHour < endTime {
+			if scaler.Status.Status != apiv1alpha1.SCALED {
+				log.Info("starting to call scaleDeployment func.")
+				err := scaleDeployment(scaler, r, ctx, replicas)
+				if err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+		} else {
+			if scaler.Status.Status == apiv1alpha1.SCALED {
+				restoreDeployment(scaler, r, ctx)
+			}
+		}
+	} else {
+		log.Info("starting deletion flow.")
+		if scaler.Status.Status == apiv1alpha1.SCALED {
+			err := restoreDeployment(scaler, r, ctx)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			log.Info("remove finalizer.")
+			controllerutil.RemoveFinalizer(scaler, finalizer)
+			err = r.Update(ctx, scaler)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		log.Info("remove scaler.")
 	}
 
 	return ctrl.Result{RequeueAfter: time.Duration(10 * time.Second)}, nil
+}
+
+func restoreDeployment(scaler *apiv1alpha1.Scaler, r *ScalerReconciler, ctx context.Context) error {
+	logger.Info("starting to return to the original state")
+	for name, originalDeployInfo := range originalDeploymentInfo {
+		deployment := &v1.Deployment{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Name:      name,
+			Namespace: originalDeployInfo.Namespace,
+		}, deployment); err != nil {
+			return err
+		}
+
+		if deployment.Spec.Replicas != &originalDeployInfo.Replicas {
+			deployment.Spec.Replicas = &originalDeployInfo.Replicas
+			if err := r.Update(ctx, deployment); err != nil {
+				return err
+			}
+		}
+	}
+
+	scaler.Status.Status = apiv1alpha1.RESTORED
+	err := r.Status().Update(ctx, scaler)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func scaleDeployment(scaler *apiv1alpha1.Scaler, r *ScalerReconciler, ctx context.Context, replicas int32) error {
@@ -105,10 +185,53 @@ func scaleDeployment(scaler *apiv1alpha1.Scaler, r *ScalerReconciler, ctx contex
 				return err
 			}
 
-			scaler.Status.Status = apiv1alpha1.SUCCESS
+			scaler.Status.Status = apiv1alpha1.SCALED
 			r.Status().Update(ctx, scaler)
 		}
 	}
+	return nil
+}
+
+func addAnnotations(scaler *apiv1alpha1.Scaler, r *ScalerReconciler, ctx context.Context) error {
+	//记录deployments的原始副本数和namespace名称
+	for _, deploy := range scaler.Spec.Deployments {
+		deployment := &v1.Deployment{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Name:      deploy.Name,
+			Namespace: deploy.Namespace,
+		}, deployment); err != nil {
+			return err
+		}
+
+		//开始记录
+		if *deployment.Spec.Replicas != scaler.Spec.Replicas {
+			logger.Info("add original state to originalDeploymentInfo map.")
+			originalDeploymentInfo[deployment.Name] = apiv1alpha1.DeploymentInfo{
+				Namespace: deployment.Namespace,
+				Replicas:  *deployment.Spec.Replicas,
+			}
+		}
+	}
+
+	//将原始记录加到annotations里
+	for deploymentName, info := range originalDeploymentInfo {
+		//将info转换为json
+		infoJson, err := json.Marshal(info)
+		if err != nil {
+			return err
+		}
+
+		//讲infoJson存到annotations map里
+		annotations[deploymentName] = string(infoJson)
+	}
+
+	//更新scaler的annotations
+	scaler.ObjectMeta.Annotations = annotations
+	err := r.Update(ctx, scaler)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 

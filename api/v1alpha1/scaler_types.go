@@ -21,12 +21,18 @@ import (
 )
 
 const (
-	SUCCESS = "Success"
-	Failed  = "Failed"
+	SCALED   = "Scaled"
+	Failed   = "Failed"
+	PENDING  = "Pending"
+	RESTORED = "Restored"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+type DeploymentInfo struct {
+	Replicas  int32  `json:"replicas"`
+	Namespace string `json:"namespace"`
+}
 
 type NamespacedName struct {
 	Name      string `json:"name"`
@@ -38,7 +44,13 @@ type ScalerSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	Start       int              `json:"start"`
+	// +kubebuilder:validation:Maximum=23
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Required
+	Start int `json:"start"`
+	// +kubebuilder:validation:Maximum=24
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Required
 	End         int              `json:"end"`
 	Replicas    int32            `json:"replicas"`
 	Deployments []NamespacedName `json:"deployments"`
