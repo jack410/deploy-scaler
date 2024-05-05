@@ -117,6 +117,7 @@ func (r *ScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	} else {
 		log.Info("starting deletion flow.")
 		if scaler.Status.Status == apiv1alpha1.SCALED {
+			log.Info("restore Deployment.")
 			err := restoreDeployment(scaler, r, ctx)
 			if err != nil {
 				return ctrl.Result{}, err
@@ -127,8 +128,16 @@ func (r *ScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			if err != nil {
 				return ctrl.Result{}, err
 			}
+			log.Info("finalizer removed.")
+		} else {
+			controllerutil.RemoveFinalizer(scaler, finalizer)
+			err = r.Update(ctx, scaler)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			log.Info("finalizer removed.")
 		}
-		log.Info("remove scaler.")
+		log.Info("scaler removed.")
 	}
 
 	return ctrl.Result{RequeueAfter: time.Duration(10 * time.Second)}, nil
@@ -221,7 +230,7 @@ func addAnnotations(scaler *apiv1alpha1.Scaler, r *ScalerReconciler, ctx context
 			return err
 		}
 
-		//讲infoJson存到annotations map里
+		//将infoJson存到annotations map里
 		annotations[deploymentName] = string(infoJson)
 	}
 
