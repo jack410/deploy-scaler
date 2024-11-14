@@ -3,9 +3,9 @@ kind: Scaler
 metadata:
   name: scaler-sample
 spec:
-  start: 20
-  end: 21
-  replicas: 2
+  start: 21
+  end: 23
+  replicas: 1
   deployments:
     - name: reviews-v1
       namespace: default

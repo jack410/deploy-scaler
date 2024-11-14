@@ -62,6 +62,8 @@ func (r *ScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	log := logger.WithValues("Request.Namespace", req.Namespace, "Request.Name", req.Name)
 	log.Info("Reconcile called")
 
+	fmt.Printf("reconcile: %+v\n", req)
+
 	//创建一个scaler实例
 	scaler := &apiv1alpha1.Scaler{}
 	err := r.Get(ctx, req.NamespacedName, scaler)
