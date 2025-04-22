@@ -146,18 +146,30 @@ func (r *ScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 }
 
 func restoreDeployment(scaler *apiv1alpha1.Scaler, r *ScalerReconciler, ctx context.Context) error {
-	logger.Info("starting to return to the original state")
-	for name, originalDeployInfo := range originalDeploymentInfo {
+	logger.Info("restoring deployments to original replicas")
+
+	for _, deploy := range scaler.Spec.Deployments {
+		// 从 Annotations 获取原始副本信息
+		infoJSON, exists := scaler.Annotations[deploy.Name]
+		if !exists {
+			continue
+		}
+
+		var originalInfo apiv1alpha1.DeploymentInfo
+		if err := json.Unmarshal([]byte(infoJSON), &originalInfo); err != nil {
+			return err
+		}
+
 		deployment := &v1.Deployment{}
 		if err := r.Get(ctx, types.NamespacedName{
-			Name:      name,
-			Namespace: originalDeployInfo.Namespace,
+			Name:      deploy.Name,
+			Namespace: originalInfo.Namespace,
 		}, deployment); err != nil {
 			return err
 		}
 
-		if deployment.Spec.Replicas != &originalDeployInfo.Replicas {
-			deployment.Spec.Replicas = &originalDeployInfo.Replicas
+		if *deployment.Spec.Replicas != originalInfo.Replicas {
+			deployment.Spec.Replicas = &originalInfo.Replicas
 			if err := r.Update(ctx, deployment); err != nil {
 				return err
 			}
@@ -165,12 +177,7 @@ func restoreDeployment(scaler *apiv1alpha1.Scaler, r *ScalerReconciler, ctx cont
 	}
 
 	scaler.Status.Status = apiv1alpha1.RESTORED
-	err := r.Status().Update(ctx, scaler)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return r.Status().Update(ctx, scaler)
 }
 
 func scaleDeployment(scaler *apiv1alpha1.Scaler, r *ScalerReconciler, ctx context.Context, replicas int32) error {
@@ -197,53 +204,46 @@ func scaleDeployment(scaler *apiv1alpha1.Scaler, r *ScalerReconciler, ctx contex
 			}
 
 			scaler.Status.Status = apiv1alpha1.SCALED
-			r.Status().Update(ctx, scaler)
+			err = r.Status().Update(ctx, scaler)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
+// 存储原始副本数到 Annotations
 func addAnnotations(scaler *apiv1alpha1.Scaler, r *ScalerReconciler, ctx context.Context) error {
-	//记录deployments的原始副本数和namespace名称
-	for _, deploy := range scaler.Spec.Deployments {
-		deployment := &v1.Deployment{}
-		if err := r.Get(ctx, types.NamespacedName{
-			Name:      deploy.Name,
-			Namespace: deploy.Namespace,
-		}, deployment); err != nil {
-			return err
-		}
-
-		//开始记录
-		if *deployment.Spec.Replicas != scaler.Spec.Replicas {
-			logger.Info("add original state to originalDeploymentInfo map.")
-			originalDeploymentInfo[deployment.Name] = apiv1alpha1.DeploymentInfo{
-				Namespace: deployment.Namespace,
-				Replicas:  *deployment.Spec.Replicas,
-			}
-		}
+	if scaler.Annotations == nil {
+		scaler.Annotations = make(map[string]string)
 	}
 
-	//将原始记录加到annotations里
-	for deploymentName, info := range originalDeploymentInfo {
-		//将info转换为json
-		infoJson, err := json.Marshal(info)
+	for _, deploy := range scaler.Spec.Deployments {
+		deployment := &v1.Deployment{}
+		err := r.Get(ctx, types.NamespacedName{
+			Namespace: deploy.Namespace,
+			Name:      deploy.Name,
+		}, deployment)
 		if err != nil {
 			return err
 		}
 
-		//将infoJson存到annotations map里
-		annotations[deploymentName] = string(infoJson)
+		// 记录原始副本数
+		originalInfo := apiv1alpha1.DeploymentInfo{
+			Namespace: deployment.Namespace,
+			Replicas:  *deployment.Spec.Replicas,
+		}
+
+		infoJSON, err := json.Marshal(originalInfo)
+		if err != nil {
+			return err
+		}
+
+		scaler.Annotations[deployment.Name] = string(infoJSON)
 	}
 
-	//更新scaler的annotations
-	scaler.ObjectMeta.Annotations = annotations
-	err := r.Update(ctx, scaler)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return r.Update(ctx, scaler)
 }
 
 // SetupWithManager sets up the controller with the Manager.
